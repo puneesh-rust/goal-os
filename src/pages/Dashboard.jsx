@@ -1,34 +1,52 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Target, Trophy, Clock, Brain, RefreshCw, Sparkles, CheckCircle2, ChevronLeft, AlertCircle, Calendar } from 'lucide-react';
+import {
+  Target, RefreshCw, ChevronLeft, AlertCircle, Download, Loader2
+} from 'lucide-react';
 import confetti from 'canvas-confetti';
-import RoadmapCard from '../components/RoadmapCard';
-import ProgressBar from '../components/ProgressBar';
+import RoadmapCard    from '../components/RoadmapCard';
+import CalendarPanel  from '../components/CalendarPanel';
+import DailyStreak    from '../components/DailyStreak';
+import { useRoadmapPDF } from '../hooks/useRoadmapPDF';   // ← new hook
+
+const ROADMAP_KEY   = 'goal_os_roadmap';
+const STARTDATE_KEY = 'goal_os_start_date';
 
 export default function Dashboard() {
-  const [roadmap, setRoadmap] = useState(null);
+  const [roadmap,        setRoadmap]        = useState(null);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [startDate,      setStartDate]      = useState(null);
   const navigate = useNavigate();
 
-  // Simulated fetching from localStorage to showcase loading state
+  // PDF hook
+  const { generatePDF, isGenerating } = useRoadmapPDF();
+
+  // ── Hydrate ──────────────────────────────────────────────────────────────
   useEffect(() => {
     const timer = setTimeout(() => {
-      const savedData = localStorage.getItem('goal_os_roadmap');
-      if (savedData) {
-        try {
-          setRoadmap(JSON.parse(savedData));
-        } catch (err) {
-          console.error("Failed to parse saved roadmap data", err);
-          localStorage.removeItem('goal_os_roadmap');
+      const saved = localStorage.getItem(ROADMAP_KEY);
+      if (saved) {
+        try { setRoadmap(JSON.parse(saved)); } catch {
+          localStorage.removeItem(ROADMAP_KEY);
         }
       }
+      const savedDate = localStorage.getItem(STARTDATE_KEY);
+      if (savedDate) {
+        const d = new Date(savedDate);
+        d.setHours(0, 0, 0, 0);
+        setStartDate(d);
+      }
       setInitialLoading(false);
-    }, 1200); // 1.2s realistic loading transition
-
+    }, 1200);
     return () => clearTimeout(timer);
   }, []);
 
-  // 1. Loading state if data is being fetched / checked
+  const handleStartDateChange = (date) => {
+    setStartDate(date);
+    localStorage.setItem(STARTDATE_KEY, date.toISOString());
+  };
+
+  // ── Loading skeleton ──────────────────────────────────────────────────────
   if (initialLoading) {
     return (
       <div className="max-w-6xl mx-auto px-6 py-10 space-y-8 animate-pulse">
@@ -56,7 +74,7 @@ export default function Dashboard() {
     );
   }
 
-  // 2. Fallback UI if data is still not available after checking
+  // ── Empty state ───────────────────────────────────────────────────────────
   if (!roadmap) {
     return (
       <div className="min-h-[calc(100vh-69px)] flex flex-col items-center justify-center px-6 text-center space-y-6">
@@ -80,126 +98,82 @@ export default function Dashboard() {
     );
   }
 
-  // Calculate overall weekly stats
-  const allWeeklyTasks = roadmap.weekly.flatMap(w => w.tasks);
-  const totalWeeklyTasks = allWeeklyTasks.length;
-  const completedWeeklyTasks = allWeeklyTasks.filter(t => t.completed).length;
-  const weeklyProgress = totalWeeklyTasks > 0 ? (completedWeeklyTasks / totalWeeklyTasks) * 100 : 0;
-
-  // Calculate daily stats
-  const totalDailyTasks = roadmap.daily?.length || 0;
-  const completedDailyTasks = roadmap.daily?.filter(t => t.completed).length || 0;
-  const dailyProgress = totalDailyTasks > 0 ? (completedDailyTasks / totalDailyTasks) * 100 : 0;
-
-  // Total tasks (weekly + daily)
-  const totalTasksCombined = totalWeeklyTasks + totalDailyTasks;
+  // ── Stats ─────────────────────────────────────────────────────────────────
+  const allWeeklyTasks         = roadmap.weekly.flatMap((w) => w.tasks);
+  const totalWeeklyTasks       = allWeeklyTasks.length;
+  const completedWeeklyTasks   = allWeeklyTasks.filter((t) => t.completed).length;
+  const totalDailyTasks        = roadmap.daily?.length || 0;
+  const completedDailyTasks    = roadmap.daily?.filter((t) => t.completed).length || 0;
+  const totalTasksCombined     = totalWeeklyTasks + totalDailyTasks;
   const completedTasksCombined = completedWeeklyTasks + completedDailyTasks;
-  const overallProgress = totalTasksCombined > 0 ? (completedTasksCombined / totalTasksCombined) * 100 : 0;
-  const isGoalCompleted = overallProgress === 100;
+  const overallProgress        = totalTasksCombined > 0
+    ? (completedTasksCombined / totalTasksCombined) * 100 : 0;
+  const isGoalCompleted        = overallProgress === 100;
 
-  // Toggle Weekly checklist item
+  // ── Toggles ───────────────────────────────────────────────────────────────
   const handleToggleWeeklyTask = (weekId, taskId) => {
     const updatedWeekly = roadmap.weekly.map((week) => {
-      if (week.id === weekId) {
-        const weekTasks = week.tasks.map((task) => {
-          if (task.id === taskId) {
-            const nextCompleted = !task.completed;
-            
-            // Trigger check confetti
-            if (nextCompleted) {
-              confetti({ particleCount: 20, angle: 60, spread: 55, origin: { x: 0 } });
-              confetti({ particleCount: 20, angle: 120, spread: 55, origin: { x: 1 } });
-            }
-
-            return { ...task, completed: nextCompleted };
-          }
-          return task;
-        });
-
-        // Check if this action completed the current week
-        const wasCompletedBefore = week.tasks.every(t => t.completed);
-        const isCompletedNow = weekTasks.every(t => t.completed);
-
-        if (!wasCompletedBefore && isCompletedNow) {
-          setTimeout(() => {
-            confetti({
-              particleCount: 80,
-              spread: 60,
-              origin: { y: 0.6 }
-            });
-          }, 200);
+      if (week.id !== weekId) return week;
+      const weekTasks = week.tasks.map((task) => {
+        if (task.id !== taskId) return task;
+        const next = !task.completed;
+        if (next) {
+          confetti({ particleCount: 20, angle: 60,  spread: 55, origin: { x: 0 } });
+          confetti({ particleCount: 20, angle: 120, spread: 55, origin: { x: 1 } });
         }
-
-        return { ...week, tasks: weekTasks };
-      }
-      return week;
+        return { ...task, completed: next };
+      });
+      const wasComplete = week.tasks.every((t) => t.completed);
+      const isNowComplete = weekTasks.every((t) => t.completed);
+      if (!wasComplete && isNowComplete)
+        setTimeout(() => confetti({ particleCount: 80, spread: 60, origin: { y: 0.6 } }), 200);
+      return { ...week, tasks: weekTasks };
     });
-
-    const updatedRoadmap = { ...roadmap, weekly: updatedWeekly };
-    saveAndCheckCelebration(updatedRoadmap);
+    persistAndCheck({ ...roadmap, weekly: updatedWeekly });
   };
 
-  // Toggle Daily habit checklist item
   const handleToggleDailyTask = (taskId) => {
     const updatedDaily = roadmap.daily.map((task) => {
-      if (task.id === taskId) {
-        const nextCompleted = !task.completed;
-        
-        if (nextCompleted) {
-          confetti({
-            particleCount: 15,
-            spread: 40,
-            origin: { y: 0.8 }
-          });
-        }
-        return { ...task, completed: nextCompleted };
-      }
-      return task;
+      if (task.id !== taskId) return task;
+      const next = !task.completed;
+      if (next) confetti({ particleCount: 15, spread: 40, origin: { y: 0.8 } });
+      return { ...task, completed: next };
     });
-
-    const updatedRoadmap = { ...roadmap, daily: updatedDaily };
-    saveAndCheckCelebration(updatedRoadmap);
+    persistAndCheck({ ...roadmap, daily: updatedDaily });
   };
 
-  const saveAndCheckCelebration = (updatedRoadmap) => {
-    setRoadmap(updatedRoadmap);
-    localStorage.setItem('goal_os_roadmap', JSON.stringify(updatedRoadmap));
-
-    // Calculate next state stats
-    const nextWeeks = updatedRoadmap.weekly.flatMap(w => w.tasks).filter(t => t.completed).length;
-    const nextDaily = updatedRoadmap.daily.filter(t => t.completed).length;
-    const totalGoalTasks = updatedRoadmap.weekly.flatMap(w => w.tasks).length + updatedRoadmap.daily.length;
-
-    // Trigger full fireworks if 100% complete
-    if (nextWeeks + nextDaily === totalGoalTasks && (completedWeeklyTasks + completedDailyTasks !== totalGoalTasks)) {
+  const persistAndCheck = (updated) => {
+    setRoadmap(updated);
+    localStorage.setItem(ROADMAP_KEY, JSON.stringify(updated));
+    const nextDone = updated.weekly.flatMap((w) => w.tasks).filter((t) => t.completed).length
+                   + updated.daily.filter((t) => t.completed).length;
+    const total    = updated.weekly.flatMap((w) => w.tasks).length + updated.daily.length;
+    if (nextDone === total && completedTasksCombined !== total) {
       setTimeout(() => {
-        const duration = 3 * 1000;
-        const end = Date.now() + duration;
-
+        const end = Date.now() + 3000;
         (function frame() {
-          confetti({ particleCount: 3, angle: 60, spread: 55, origin: { x: 0 } });
+          confetti({ particleCount: 3, angle: 60,  spread: 55, origin: { x: 0 } });
           confetti({ particleCount: 3, angle: 120, spread: 55, origin: { x: 1 } });
-          
-          if (Date.now() < end) {
-            requestAnimationFrame(frame);
-          }
-        }());
+          if (Date.now() < end) requestAnimationFrame(frame);
+        })();
       }, 300);
     }
   };
 
   const handleReset = () => {
-    if (window.confirm("Are you sure you want to reset your active goal? All progress will be deleted.")) {
-      localStorage.removeItem('goal_os_roadmap');
+    if (window.confirm('Are you sure you want to reset your active goal? All progress will be deleted.')) {
+      localStorage.removeItem(ROADMAP_KEY);
+      localStorage.removeItem(STARTDATE_KEY);
       navigate('/');
     }
   };
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-6xl mx-auto px-6 py-10 space-y-8 animate-fadeIn relative">
       <div className="absolute top-10 left-1/3 w-72 h-72 bg-indigo-500/5 rounded-full blur-[85px] pointer-events-none" />
 
-      {/* Back button actions */}
+      {/* Top bar */}
       <div className="flex items-center justify-between">
         <button
           onClick={() => navigate('/')}
@@ -208,7 +182,6 @@ export default function Dashboard() {
           <ChevronLeft className="w-4 h-4" />
           <span>Edit Goal</span>
         </button>
-
         {roadmap.isMock && (
           <span className="px-3 py-1 bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 rounded-full text-xs font-semibold animate-pulse">
             Local Simulation Mode
@@ -216,13 +189,13 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Goal Header Section */}
+      {/* Goal header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 pb-6 border-b border-slate-900/80">
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
             <span className="px-2.5 py-0.5 rounded-md text-xs font-bold bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 uppercase tracking-wide flex items-center gap-1">
               <Target className="w-3.5 h-3.5" />
-              {roadmap.category || "General Goal"}
+              {roadmap.category || 'General Goal'}
             </span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-100 leading-tight">
@@ -230,39 +203,57 @@ export default function Dashboard() {
           </h2>
         </div>
 
-        <button
-          onClick={handleReset}
-          className="px-4 py-2.5 bg-slate-950/80 hover:bg-rose-950/10 border border-slate-900 hover:border-rose-500/30 text-slate-400 hover:text-rose-400 rounded-xl transition-all text-sm font-semibold flex items-center gap-2 cursor-pointer self-start md:self-auto"
-        >
-          <RefreshCw className="w-4 h-4" />
-          <span>New Goal OS</span>
-        </button>
+        {/* ── Action buttons row ─────────────────────────────────────────── */}
+        <div className="flex items-center gap-3 self-start md:self-auto">
+
+          {/* PDF Export button */}
+          <button
+            onClick={() => generatePDF(roadmap)}
+            disabled={isGenerating}
+            className={`px-4 py-2.5 border rounded-xl transition-all text-sm font-semibold flex items-center gap-2 cursor-pointer
+              ${isGenerating
+                ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400/50 cursor-not-allowed'
+                : 'bg-indigo-500/10 hover:bg-indigo-500/20 border-indigo-500/20 hover:border-indigo-500/40 text-indigo-400 hover:text-indigo-300'
+              }`}
+          >
+            {isGenerating
+              ? <Loader2 className="w-4 h-4 animate-spin" />
+              : <Download className="w-4 h-4" />
+            }
+            <span>{isGenerating ? 'Generating…' : 'Export PDF'}</span>
+          </button>
+
+          {/* Reset button */}
+          <button
+            onClick={handleReset}
+            className="px-4 py-2.5 bg-slate-950/80 hover:bg-rose-950/10 border border-slate-900 hover:border-rose-500/30 text-slate-400 hover:text-rose-400 rounded-xl transition-all text-sm font-semibold flex items-center gap-2 cursor-pointer"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>New Goal OS</span>
+          </button>
+
+        </div>
       </div>
 
-      {/* Grid Layout containing sections */}
+      {/* Main grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Left Column: Progress summary card & stats */}
+
+        {/* Left column */}
         <div className="space-y-6 lg:col-span-1">
-          
-          {/* Section A: Overall Progress Circular gauge */}
+
+          {/* Overall progress ring */}
           <div className="glass-panel p-6 rounded-2xl border border-slate-800 flex flex-col items-center text-center space-y-6 relative overflow-hidden shadow-xl">
             <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 via-transparent to-transparent pointer-events-none" />
             <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Overall Completion</h3>
-            
             <div className="relative w-36 h-36 flex items-center justify-center">
               <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
-                <circle cx="50" cy="50" r="40" strokeWidth="8" stroke="rgba(15, 23, 42, 0.8)" fill="transparent" className="stroke-slate-950" />
+                <circle cx="50" cy="50" r="40" strokeWidth="8" stroke="rgba(15,23,42,0.8)" fill="transparent" />
                 <circle
-                  cx="50"
-                  cy="50"
-                  r="40"
-                  strokeWidth="8"
+                  cx="50" cy="50" r="40" strokeWidth="8"
                   stroke={isGoalCompleted ? '#10b981' : '#6366f1'}
                   strokeDasharray={2 * Math.PI * 40}
                   strokeDashoffset={2 * Math.PI * 40 * (1 - overallProgress / 100)}
-                  strokeLinecap="round"
-                  fill="transparent"
+                  strokeLinecap="round" fill="transparent"
                   className="transition-all duration-700 ease-out"
                   style={{ filter: isGoalCompleted ? 'drop-shadow(0 0 8px rgba(16,185,129,0.4))' : 'drop-shadow(0 0 8px rgba(99,102,241,0.4))' }}
                 />
@@ -278,7 +269,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Quick stats details card */}
+          {/* OS Metrics */}
           <div className="glass-card p-6 rounded-2xl border border-slate-800 space-y-4 shadow-lg">
             <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-400">OS Metrics</h3>
             <div className="space-y-3.5 text-xs text-slate-300">
@@ -292,16 +283,31 @@ export default function Dashboard() {
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-slate-400">Category Tag:</span>
-                <span className="font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">{roadmap.category || "General"}</span>
+                <span className="font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded">
+                  {roadmap.category || 'General'}
+                </span>
               </div>
             </div>
           </div>
 
+          {/* Daily Streak */}
+          <DailyStreak
+            dailyTasks={roadmap.daily}
+            onToggleDailyTask={handleToggleDailyTask}
+          />
+
+          {/* Calendar */}
+          <CalendarPanel
+            weeks={roadmap.weekly}
+            startDate={startDate}
+            onStartDateChange={handleStartDateChange}
+          />
+
         </div>
 
-        {/* Right Column: Unified RoadmapCard showing all 3 sections */}
+        {/* Right column */}
         <div className="lg:col-span-2 space-y-6">
-          <RoadmapCard 
+          <RoadmapCard
             monthlyPlan={roadmap.monthly?.[0]}
             weeks={roadmap.weekly}
             dailyTasks={roadmap.daily}
